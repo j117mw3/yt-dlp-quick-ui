@@ -1,0 +1,5 @@
+# Optional: install yt-dlp into the Python environment used by run.bat.
+# A standalone yt-dlp.exe beside the script is also supported.
+yt-dlp==2026.8.19
+yt-dlp-ejs==0.8.0
+

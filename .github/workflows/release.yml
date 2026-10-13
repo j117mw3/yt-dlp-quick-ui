@@ -1,0 +1,91 @@
+name: Build Windows release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    runs-on: windows-2022
+    steps:
+      - name: Check the release tag
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -ne 'v1.0.0') {
+            throw "This workflow currently builds version 1.0.0. Update tools/build_release.py before tagging a different release."
+          }
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+          architecture: x64
+
+      - name: Install pinned build dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-build.txt
+
+      - name: Install pinned Inno Setup
+        shell: pwsh
+        run: choco install innosetup --version=6.7.1 --yes --no-progress --limit-output
+
+      - name: Run source tests
+        run: python -m unittest discover --start-directory tests --verbose
+
+      - name: Build packages and checksums
+        run: python tools/build_release.py
+
+      - name: Scan source and built packages for personal paths
+        run: python tools/privacy_audit.py
+
+      - name: Smoke-check package contents and hashes
+        shell: pwsh
+        run: |
+          $required = @(
+            "yt-dlp-quick-ui-setup-v1.0.0.exe",
+            "yt-dlp-quick-ui-v1.0.0-portable.zip",
+            "yt-dlp-quick-ui-v1.0.0-source.zip",
+            "yt-dlp-quick-ui-v1.0.0-third-party-source.zip",
+            "SHA256SUMS.txt"
+          )
+          foreach ($name in $required) {
+            $path = Join-Path "release-assets" $name
+            if (-not (Test-Path -LiteralPath $path)) { throw "Missing release asset: $name" }
+          }
+          Get-Content "release-assets\SHA256SUMS.txt" | ForEach-Object {
+            $parts = $_ -split '\s+', 2
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path "release-assets" $parts[1])).Hash.ToLowerInvariant()
+            if ($actual -ne $parts[0]) { throw "Checksum mismatch: $($parts[1])" }
+          }
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: yt-dlp-quick-ui-windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            "release-assets\yt-dlp-quick-ui-setup-v1.0.0.exe" `
+            "release-assets\yt-dlp-quick-ui-v1.0.0-portable.zip" `
+            "release-assets\yt-dlp-quick-ui-v1.0.0-source.zip" `
+            "release-assets\yt-dlp-quick-ui-v1.0.0-third-party-source.zip" `
+            "release-assets\SHA256SUMS.txt" `
+            --title "yt-dlp Quick UI v1.0.0" `
+            --notes-file CHANGELOG.md `
+            --verify-tag `
+            --latest
+
