@@ -25,6 +25,49 @@ DIST = ROOT / "dist"
 STAGE = DIST / PACKAGE_NAME
 RELEASE = ROOT / "release-assets"
 DEPENDENCIES = json.loads((ROOT / "tools" / "dependencies.json").read_text(encoding="utf-8"))
+ASCII_PROFILE_PATH = re.compile(rb"C:\\Users\\([^\\/\x00]{1,64})", re.IGNORECASE)
+UTF16_PROFILE_PATH = re.compile(
+    rb"C\x00:\x00\\\x00U\x00s\x00e\x00r\x00s\x00\\\x00((?:[^\\\x00]\x00){1,64})",
+    re.IGNORECASE,
+)
+
+
+def sanitize_embedded_windows_profile_paths(data: bytes) -> tuple[bytes, int, int]:
+    """Replace compiled Windows user prefixes with neutral same-length strings."""
+
+    def replacement(match: re.Match[bytes], wide: bool) -> bytes:
+        username = match.group(1).decode("utf-16le" if wide else "ascii")
+        if len(username) < 5:
+            neutral = "x" * len(username)
+        else:
+            neutral = "agent" + "_" * (len(username) - 5)
+        prefix = "C:\\Build\\" + neutral
+        encoded = prefix.encode("utf-16le" if wide else "ascii")
+        if len(encoded) != len(match.group(0)):
+            raise RuntimeError("Could not preserve the embedded Windows profile string length")
+        return encoded
+
+    sanitized, ascii_count = ASCII_PROFILE_PATH.subn(lambda match: replacement(match, False), data)
+    sanitized, wide_count = UTF16_PROFILE_PATH.subn(lambda match: replacement(match, True), sanitized)
+    if ascii_count == 0 or wide_count == 0:
+        raise RuntimeError(
+            "The pinned Deno executable did not contain the expected ASCII and UTF-16 build-path markers"
+        )
+    if ASCII_PROFILE_PATH.search(sanitized) or UTF16_PROFILE_PATH.search(sanitized):
+        raise RuntimeError("An embedded Windows profile path remained after Deno path normalization")
+    return sanitized, ascii_count, wide_count
+
+
+def sanitize_deno_build_paths(executable: Path) -> tuple[int, int]:
+    original = executable.read_bytes()
+    sanitized, ascii_count, wide_count = sanitize_embedded_windows_profile_paths(original)
+    executable.write_bytes(sanitized)
+    print(
+        "Normalized embedded Deno build-host profile paths "
+        f"(ASCII: {ascii_count}, UTF-16: {wide_count}; same-length string replacements).",
+        flush=True,
+    )
+    return ascii_count, wide_count
 
 
 def sha256(path: Path) -> str:
@@ -134,7 +177,9 @@ def extract_bundled_tools(files: dict[str, Path]) -> None:
         deno_entry = next((item for item in archive.namelist() if item.lower().endswith("/deno.exe") or item.lower() == "deno.exe"), None)
         if deno_entry is None:
             raise RuntimeError("The pinned Deno archive did not contain deno.exe")
-        (tools_dir / "deno.exe").write_bytes(archive.read(deno_entry))
+        deno_executable = tools_dir / "deno.exe"
+        deno_executable.write_bytes(archive.read(deno_entry))
+    sanitize_deno_build_paths(deno_executable)
     with zipfile.ZipFile(files["ffmpeg"]) as archive:
         for tool in ("ffmpeg.exe", "ffprobe.exe"):
             matches = [item for item in archive.namelist() if item.lower().endswith("/bin/" + tool)]
@@ -275,6 +320,7 @@ SOURCE_FILES = (
     "packaging/setup.iss",
     "screenshots/app-overview.png",
     "tests/test_app.py",
+    "tests/test_build_release.py",
     ".github/ISSUE_TEMPLATE/bug_report.yml",
     ".github/ISSUE_TEMPLATE/feature_request.yml",
     ".github/workflows/release.yml",

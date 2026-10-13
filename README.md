@@ -75,9 +75,10 @@ py -3.12 -m venv .build-venv
 
 The build downloads the exact versions in `tools/dependencies.json`, verifies
 their SHA-256 checksums against upstream checksum files and pinned digests, and
-builds the portable ZIP, setup EXE, source ZIP, third-party source ZIP, and
-release checksum file. The same process runs on GitHub Actions for version
-tags. Do not commit downloaded tools or generated packages.
+normalizes Deno's embedded build-host source paths for privacy. It builds the
+portable ZIP, setup EXE, source ZIP, third-party source ZIP, and release
+checksum file. The same process runs on GitHub Actions for version tags. Do not
+commit downloaded tools or generated packages.
 
 ## License and use
 

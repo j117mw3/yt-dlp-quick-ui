@@ -18,6 +18,12 @@ FFmpeg package is the LGPL build; its own `-L` output and included notice files
 identify the license and build configuration. Deno and PyInstaller source
 links above are version-pinned.
 
+The release builder verifies the official Deno archive checksum before
+replacing embedded Windows build-profile prefixes with a neutral, same-length
+path. This only normalizes source-location strings included in the upstream
+binary; it does not alter executable code. The Deno source archive is included
+in the third-party source package.
+
 yt-dlp's standalone executable carries its own compiled third-party notices.
 The downloaded upstream notices, FFmpeg notices, and Deno license are copied
 into the installed application's `licenses` directory when the release is
